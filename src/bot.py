@@ -288,20 +288,22 @@ async def continue_learning(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_last_topic:
         text += "\n🎉 *Это финальная тема!* Заверши курс!"
     
+    # Truncate if too long for Telegram (4096 limit)
+    if len(text) > 4000:
+        text = text[:3950] + "\n\n... *(текст обрезан)*"
+    
     try:
         await query.edit_message_text(
             text,
             parse_mode="Markdown",
-            reply_markup=get_topic_keyboard(track, stage, topic_num, is_last_topic),
-            disable_web_page_preview=True
+            reply_markup=get_topic_keyboard(track, stage, topic_num, is_last_topic)
+            # Web preview enabled for YouTube video previews
         )
     except Exception as e:
-        # Message too long or unchanged
+        logger.error(f"Error sending topic: {e}")
         await query.edit_message_text(
-            text[:3500] + "\n..." if len(text) > 3500 else text,
-            parse_mode="Markdown",
-            reply_markup=get_topic_keyboard(track, stage, topic_num, is_last_topic),
-            disable_web_page_preview=True
+            "❌ Ошибка загрузки темы. Попробуй ещё раз.",
+            reply_markup=get_main_menu_keyboard(user_id)
         )
 
 
@@ -637,8 +639,8 @@ def main():
         await application.bot.send_message(
             user_id, 
             text, 
-            parse_mode="Markdown",
-            disable_web_page_preview=True
+            parse_mode="Markdown"
+            # Web preview enabled for YouTube video previews in reminders
         )
     
     start_scheduler(send_message)
