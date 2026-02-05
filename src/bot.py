@@ -26,6 +26,13 @@ from roadmaps import (
 )
 from scheduler import start_scheduler, format_days_display
 
+# TimePicker для выбора времени
+from handlers.timepicker import (
+    get_time_picker_hours, get_time_picker_minutes, get_time_confirm_keyboard,
+    calculate_reminder_time, get_hour_selection_text, get_minute_selection_text,
+    get_confirm_text
+)
+
 # Logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -34,7 +41,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Conversation states
-SELECTING_TRACK, SELECTING_SCHEDULE_TYPE, SELECTING_DAYS, SELECTING_TIME = range(4)
+SELECTING_TRACK, SELECTING_SCHEDULE_TYPE, SELECTING_DAYS, SELECTING_HOUR, SELECTING_MINUTE, CONFIRMING_TIME = range(6)
 
 # ============== Helper Functions ==============
 
@@ -112,21 +119,9 @@ def get_days_keyboard(selected: list = None) -> InlineKeyboardMarkup:
 
 
 def get_time_keyboard() -> InlineKeyboardMarkup:
-    """Get time selection keyboard."""
-    times = ["09:00", "10:00", "12:00", "15:00", "18:00", "19:00", "20:00", "21:00"]
-    
-    rows = []
-    row = []
-    for t in times:
-        row.append(InlineKeyboardButton(t, callback_data=f"time|{t}"))
-        if len(row) == 4:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    
-    rows.append([InlineKeyboardButton("❌ Отмена", callback_data="main_menu")])
-    return InlineKeyboardMarkup(rows)
+    """Get time selection keyboard — deprecated, use TimePicker instead."""
+    # Оставлено для обратной совместимости
+    return get_time_picker_hours()
 
 
 # ============== Command Handlers ==============
@@ -512,13 +507,13 @@ async def handle_schedule_type(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return SELECTING_DAYS
     else:
+        # TimePicker: начинаем с выбора часа
         await query.edit_message_text(
-            "🕐 *Выбери время:*\n\n"
-            "Когда присылать напоминания?",
+            get_hour_selection_text(),
             parse_mode="Markdown",
-            reply_markup=get_time_keyboard()
+            reply_markup=get_time_picker_hours()
         )
-        return SELECTING_TIME
+        return SELECTING_HOUR
 
 
 async def handle_day_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -531,13 +526,13 @@ async def handle_day_selection(update: Update, context: ContextTypes.DEFAULT_TYP
             await query.answer("⚠️ Выбери хотя бы один день!")
             return SELECTING_DAYS
         
+        # TimePicker: начинаем с выбора часа
         await query.edit_message_text(
-            "🕐 *Выбери время:*\n\n"
-            "Когда присылать напоминания?",
+            get_hour_selection_text(),
             parse_mode="Markdown",
-            reply_markup=get_time_keyboard()
+            reply_markup=get_time_picker_hours()
         )
-        return SELECTING_TIME
+        return SELECTING_HOUR
     
     day = query.data.split("|")[1]
     selected = context.user_data.get("selected_days", [])
@@ -558,21 +553,67 @@ async def handle_day_selection(update: Update, context: ContextTypes.DEFAULT_TYP
     return SELECTING_DAYS
 
 
-async def handle_time_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle time selection and save reminder."""
+# ============ TimePicker Handlers ============
+
+async def handle_hour_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle hour selection in TimePicker."""
     query = update.callback_query
     await query.answer()
     
-    time = query.data.split("|")[1]
+    hour = int(query.data.split(":")[1])
+    context.user_data['reminder_hour'] = hour
+    
+    await query.edit_message_text(
+        get_minute_selection_text(hour),
+        parse_mode="Markdown",
+        reply_markup=get_time_picker_minutes(hour)
+    )
+    return SELECTING_MINUTE
+
+
+async def handle_minute_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle minute selection in TimePicker."""
+    query = update.callback_query
+    await query.answer()
+    
+    _, hour, minute = query.data.split(":")
+    hour, minute = int(hour), int(minute)
+    
+    # Вычисляем время напоминания
+    selected_time, date_str = calculate_reminder_time(hour, minute)
+    
+    context.user_data['reminder_hour'] = hour
+    context.user_data['reminder_minute'] = minute
+    context.user_data['reminder_time'] = selected_time
+    context.user_data['reminder_date_str'] = date_str
+    
+    await query.edit_message_text(
+        get_confirm_text(hour, minute, date_str),
+        parse_mode="Markdown",
+        reply_markup=get_time_confirm_keyboard(hour, minute, date_str)
+    )
+    return CONFIRMING_TIME
+
+
+async def handle_time_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle time confirmation and save reminder."""
+    query = update.callback_query
+    await query.answer()
+    
     user_id = update.effective_user.id
     user = get_user(user_id)
     
+    hour = context.user_data.get('reminder_hour', 9)
+    minute = context.user_data.get('reminder_minute', 0)
     schedule_type = context.user_data.get("schedule_type", "weekdays")
     days = context.user_data.get("selected_days", [])
     track = user["selected_track"]
     
+    # Форматируем время для сохранения (HH:MM)
+    time_str = f"{hour:02d}:{minute:02d}"
+    
     # Save reminder
-    add_reminder(user_id, track, schedule_type, days, time)
+    add_reminder(user_id, track, schedule_type, days, time_str)
     
     days_str = format_days_display(schedule_type, days)
     
@@ -580,13 +621,54 @@ async def handle_time_selection(update: Update, context: ContextTypes.DEFAULT_TY
         f"✅ *Напоминание настроено!*\n\n"
         f"📚 Курс: {get_track_display_name(track)}\n"
         f"📅 Расписание: {days_str}\n"
-        f"🕐 Время: {time}\n\n"
+        f"🕐 Время: {time_str}\n\n"
         f"Буду напоминать о занятиях! 🎯",
         parse_mode="Markdown",
         reply_markup=get_main_menu_keyboard(user_id)
     )
     
     return ConversationHandler.END
+
+
+async def handle_timepicker_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Go back to hour selection."""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        get_hour_selection_text(),
+        parse_mode="Markdown",
+        reply_markup=get_time_picker_hours()
+    )
+    return SELECTING_HOUR
+
+
+async def handle_timepicker_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel time selection."""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "❌ Настройка напоминания отменена",
+        reply_markup=get_main_menu_keyboard(update.effective_user.id)
+    )
+    return ConversationHandler.END
+
+
+# ============ Legacy Handler (для обратной совместимости) ============
+
+async def handle_time_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle legacy time selection (deprecated, используется TimePicker)."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Если пришёл старый формат — перенаправляем на TimePicker
+    await query.edit_message_text(
+        get_hour_selection_text(),
+        parse_mode="Markdown",
+        reply_markup=get_time_picker_hours()
+    )
+    return SELECTING_HOUR
 
 
 async def cancel_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -648,7 +730,7 @@ def main():
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     
-    # Reminder setup conversation
+    # Reminder setup conversation с TimePicker
     reminder_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(setup_reminders, pattern="^setup_reminders$")],
         states={
@@ -660,12 +742,23 @@ def main():
                 CallbackQueryHandler(handle_day_selection, pattern="^(day\||days_done$)"),
                 CallbackQueryHandler(cancel_setup, pattern="^main_menu$")
             ],
-            SELECTING_TIME: [
-                CallbackQueryHandler(handle_time_selection, pattern="^time\|"),
-                CallbackQueryHandler(cancel_setup, pattern="^main_menu$")
+            SELECTING_HOUR: [
+                CallbackQueryHandler(handle_hour_selection, pattern="^tp_hour:"),
+                CallbackQueryHandler(handle_timepicker_cancel, pattern="^tp_cancel$")
+            ],
+            SELECTING_MINUTE: [
+                CallbackQueryHandler(handle_minute_selection, pattern="^tp_min:"),
+                CallbackQueryHandler(handle_timepicker_back, pattern="^tp_back_hours$")
+            ],
+            CONFIRMING_TIME: [
+                CallbackQueryHandler(handle_time_confirmation, pattern="^tp_confirm:"),
+                CallbackQueryHandler(handle_timepicker_back, pattern="^tp_back_hours$")
             ]
         },
-        fallbacks=[CallbackQueryHandler(cancel_setup, pattern="^main_menu$")]
+        fallbacks=[
+            CallbackQueryHandler(cancel_setup, pattern="^main_menu$"),
+            CallbackQueryHandler(handle_timepicker_cancel, pattern="^tp_cancel$")
+        ]
     )
     application.add_handler(reminder_conv)
     
