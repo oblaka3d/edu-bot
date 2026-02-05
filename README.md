@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/001-skilltree-logo-digital-tree-made-of-glow.png" alt="SkillTree Logo" width="200"/>
+  <img src="assets/logos/001-minimalist-skilltree-logo-tree-growing-f.png" alt="SkillTree Logo" width="200"/>
 </p>
 
 <h1 align="center">🌳 SkillTree</h1>
