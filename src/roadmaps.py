@@ -51,8 +51,18 @@ def parse_roadmap(track: str) -> Optional[Roadmap]:
     title_match = re.search(r"# (.+)", content)
     title = title_match.group(1) if title_match else track
     
-    desc_match = re.search(r"> (.+)", content)
-    description = desc_match.group(1) if desc_match else ""
+    # Parse description (can be multiline after >)
+    desc_lines = []
+    in_desc = False
+    for line in lines:
+        if line.startswith("> "):
+            desc_lines.append(line[2:])
+            in_desc = True
+        elif in_desc and line.strip() and not line.startswith("#"):
+            desc_lines.append(line)
+        elif in_desc and (line.startswith("#") or line.startswith("---")):
+            break
+    description = " ".join(desc_lines) if desc_lines else ""
     
     stages = []
     current_stage = None
@@ -67,7 +77,7 @@ def parse_roadmap(track: str) -> Optional[Roadmap]:
         # Stage header: ## Этап 1: Name
         stage_match = re.match(r"##\s+Этап\s+(\d+):\s+(.+)", line)
         if stage_match:
-            if current_topic:
+            if current_topic and current_stage:
                 current_stage.topics.append(current_topic)
             if current_stage:
                 stages.append(current_stage)
@@ -109,15 +119,18 @@ def parse_roadmap(track: str) -> Optional[Roadmap]:
             section = "content"
             continue
         
-        # Section headers
-        if line == "**Практика:**":
+        # Section headers (with or without emoji)
+        if line in ["**Практика:**", "💻 **Практика:**"]:
             section = "practice"
             continue
-        elif line == "**Ресурсы:**":
+        elif line in ["**Ресурсы:**", "📚 **Ресурсы:**"]:
             section = "resources"
             continue
-        elif line == "**Видео:**":
+        elif line in ["**Видео:**", "🎥 **Видео:**"]:
             section = "videos"
+            continue
+        elif line in ["**Изучим:**", "📖 **Изучим:**"]:
+            section = "content"
             continue
         elif line.startswith("---"):
             section = None
@@ -127,27 +140,37 @@ def parse_roadmap(track: str) -> Optional[Roadmap]:
         if not line or not current_topic:
             continue
         
-        if section == "content" and line.startswith("- "):
-            current_topic.content.append(line[2:])
-        elif section == "practice" and line.startswith("- "):
-            current_topic.practice.append(line[2:])
-        elif section == "resources" and line.startswith("- "):
-            # Parse markdown link: [text](url)
-            link_match = re.search(r"\[(.+?)\]\((.+?)\)", line)
-            if link_match:
-                current_topic.resources.append({
-                    "title": link_match.group(1),
-                    "url": link_match.group(2)
-                })
-            else:
-                current_topic.resources.append({"title": line[2:], "url": ""})
-        elif section == "videos" and line.startswith("- "):
-            link_match = re.search(r"\[(.+?)\]\((.+?)\)", line)
-            if link_match:
-                current_topic.videos.append({
-                    "title": link_match.group(1),
-                    "url": link_match.group(2)
-                })
+        # Support both "- " and "• " list markers
+        list_marker = None
+        if line.startswith("- "):
+            list_marker = "- "
+        elif line.startswith("• "):
+            list_marker = "• "
+        
+        if list_marker:
+            content_text = line[len(list_marker):]
+            
+            if section == "content":
+                current_topic.content.append(content_text)
+            elif section == "practice":
+                current_topic.practice.append(content_text)
+            elif section == "resources":
+                # Parse markdown link: [text](url)
+                link_match = re.search(r"\[(.+?)\]\((.+?)\)", content_text)
+                if link_match:
+                    current_topic.resources.append({
+                        "title": link_match.group(1),
+                        "url": link_match.group(2)
+                    })
+                else:
+                    current_topic.resources.append({"title": content_text, "url": ""})
+            elif section == "videos":
+                link_match = re.search(r"\[(.+?)\]\((.+?)\)", content_text)
+                if link_match:
+                    current_topic.videos.append({
+                        "title": link_match.group(1),
+                        "url": link_match.group(2)
+                    })
     
     # Add last topic and stage
     if current_topic and current_stage:
