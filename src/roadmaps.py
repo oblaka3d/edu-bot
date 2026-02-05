@@ -205,16 +205,17 @@ def format_topic_for_display(topic: Topic, total_in_stage: int) -> str:
         f""
     ]
     
-    if topic.content:
-        lines.append("📖 *Изучим:*")
-        for item in topic.content:
-            lines.append(f"• {item}")
-        lines.append("")
-    
+    # Videos first for Telegram preview
     if topic.videos:
         lines.append("🎥 *Видео:*")
         for video in topic.videos:
             lines.append(f"• [{video['title']}]({video['url']})")
+        lines.append("")
+    
+    if topic.content:
+        lines.append("📖 *Изучим:*")
+        for item in topic.content:
+            lines.append(f"• {item}")
         lines.append("")
     
     if topic.resources:
